@@ -1,12 +1,22 @@
 const express = require("express");
 const router = express.Router();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const bodyParser = require("body-parser");
 const db = require("../db");
 
-// CREATE CHECKOUT SESSION
 router.post("/create-checkout-session", async (req, res) => {
   try {
+    console.log("Creating checkout session...");
+    console.log("STRIPE_PRICE_ID:", process.env.STRIPE_PRICE_ID ? "exists" : "missing");
+    console.log("STRIPE_SECRET_KEY:", process.env.STRIPE_SECRET_KEY ? "exists" : "missing");
+
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ message: "Missing STRIPE_SECRET_KEY" });
+    }
+
+    if (!process.env.STRIPE_PRICE_ID) {
+      return res.status(500).json({ message: "Missing STRIPE_PRICE_ID" });
+    }
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "subscription",
@@ -21,49 +31,45 @@ router.post("/create-checkout-session", async (req, res) => {
     });
 
     res.json({ url: session.url });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error("Stripe checkout error:", error.message);
+    res.status(500).json({ message: error.message });
   }
 });
 
-// STRIPE WEBHOOK (THIS IS THE IMPORTANT PART)
-router.post(
-  "/webhook",
-  bodyParser.raw({ type: "application/json" }),
-  (req, res) => {
-    const sig = req.headers["stripe-signature"];
+router.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  const sig = req.headers["stripe-signature"];
 
-    let event;
+  let event;
 
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-    } catch (err) {
-      console.log("Webhook error:", err.message);
-      return res.sendStatus(400);
-    }
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (error) {
+    console.error("Webhook signature error:", error.message);
+    return res.sendStatus(400);
+  }
 
-    // PAYMENT SUCCESS
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const email = session.customer_details?.email;
 
-      const email = session.customer_details.email;
+    console.log("Payment completed:", email);
 
-      console.log("Payment received from:", email);
-
+    if (email) {
       try {
-        // 🔥 THIS MATCHES YOUR LICENCE SYSTEM
-        db.prepare("UPDATE users SET licence = 1 WHERE email = ?").run(email);
-      } catch (err) {
-        console.log("DB error:", err);
+        db.prepare("UPDATE users SET subscriptionActive = 1 WHERE email = ?").run(email);
+        console.log("Licence activated for:", email);
+      } catch (error) {
+        console.error("Database activation error:", error.message);
       }
     }
-
-    res.sendStatus(200);
   }
-);
+
+  res.sendStatus(200);
+});
 
 module.exports = router;
