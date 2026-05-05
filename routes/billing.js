@@ -1,9 +1,10 @@
 const express = require("express");
+const router = express.Router();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const bodyParser = require("body-parser");
 const db = require("../db");
 
-const router = express.Router();
-
+// CREATE CHECKOUT SESSION
 router.post("/create-checkout-session", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
@@ -11,36 +12,58 @@ router.post("/create-checkout-session", async (req, res) => {
       mode: "subscription",
       line_items: [
         {
-          price: "price_1TTQfS2LrMxK0iBVxo7QsIEj",
+          price: process.env.STRIPE_PRICE_ID,
           quantity: 1,
         },
       ],
-      success_url: "http://localhost:5000/api/billing/success?session_id={CHECKOUT_SESSION_ID}",
-      cancel_url: "http://localhost:5000/api/billing/cancel",
+      success_url: "https://gumtree.com",
+      cancel_url: "https://gumtree.com",
     });
 
     res.json({ url: session.url });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/success", async (req, res) => {
-  try {
-    const session = await stripe.checkout.sessions.retrieve(req.query.session_id);
+// STRIPE WEBHOOK (THIS IS THE IMPORTANT PART)
+router.post(
+  "/webhook",
+  bodyParser.raw({ type: "application/json" }),
+  (req, res) => {
+    const sig = req.headers["stripe-signature"];
 
-    const email = session.customer_details.email;
+    let event;
 
-    db.prepare("UPDATE users SET subscriptionActive = 1 WHERE email = ?").run(email);
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.log("Webhook error:", err.message);
+      return res.sendStatus(400);
+    }
 
-    res.send("Payment successful. Your account is now active.");
-  } catch (error) {
-    res.status(500).send("Payment succeeded, but activation failed.");
+    // PAYMENT SUCCESS
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      const email = session.customer_details.email;
+
+      console.log("Payment received from:", email);
+
+      try {
+        // 🔥 THIS MATCHES YOUR LICENCE SYSTEM
+        db.prepare("UPDATE users SET licence = 1 WHERE email = ?").run(email);
+      } catch (err) {
+        console.log("DB error:", err);
+      }
+    }
+
+    res.sendStatus(200);
   }
-});
-
-router.get("/cancel", (req, res) => {
-  res.send("Payment cancelled.");
-});
+);
 
 module.exports = router;
