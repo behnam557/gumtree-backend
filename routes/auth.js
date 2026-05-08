@@ -24,23 +24,30 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    const existingUser = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const existingUser = await db.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
 
-    if (existingUser) {
-      return res.status(400).json({ message: "Email already exists. Please login instead." });
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        message: "Email already exists. Please login instead.",
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = db
-      .prepare("INSERT INTO users (email, password) VALUES (?, ?)")
-      .run(email, hashedPassword);
+    const result = await db.query(
+      "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email",
+      [email, hashedPassword]
+    );
 
-    const token = createToken(result.lastInsertRowid);
+    const user = result.rows[0];
+    const token = createToken(user.id);
 
     res.json({
       token,
-      email,
+      email: user.email,
     });
   } catch (error) {
     console.error("Register error:", error);
@@ -57,11 +64,16 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const result = await db.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
 
-    if (!user) {
+    if (result.rows.length === 0) {
       return res.status(400).json({ message: "Invalid login details" });
     }
+
+    const user = result.rows[0];
 
     const passwordMatch = await bcrypt.compare(password, user.password);
 
