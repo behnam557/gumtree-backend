@@ -1,16 +1,27 @@
-const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 
-const db = new Database("database.sqlite");
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 
-db.prepare(`
+pool.query(`
   CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
-    stripeCustomerId TEXT,
-    subscriptionActive INTEGER DEFAULT 0,
-    createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    stripe_customer_id TEXT,
+    subscription_active BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )
-`).run();
+`)
+.then(() => {
+  console.log("PostgreSQL users table ready");
+})
+.catch((err) => {
+  console.error("Database setup error:", err);
+});
 
-module.exports = db;
+module.exports = pool;
