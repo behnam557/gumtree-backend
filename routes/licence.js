@@ -4,7 +4,7 @@ const db = require("../db");
 
 const router = express.Router();
 
-router.get("/check", (req, res) => {
+router.get("/check", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -13,19 +13,26 @@ router.get("/check", (req, res) => {
     }
 
     const token = authHeader.replace("Bearer ", "");
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(decoded.userId);
+    const result = await db.query(
+      "SELECT * FROM users WHERE id = $1",
+      [decoded.userId]
+    );
 
-    if (!user) {
+    if (result.rows.length === 0) {
       return res.status(401).json({ active: false });
     }
 
+    const user = result.rows[0];
+
     res.json({
-      active: user.subscriptionActive === 1,
+      active: user.subscription_active === true,
       email: user.email,
     });
   } catch (error) {
+    console.error("Licence check error:", error);
     res.status(401).json({ active: false });
   }
 });
