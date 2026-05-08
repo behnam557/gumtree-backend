@@ -1,13 +1,24 @@
 const { Pool } = require("pg");
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+let connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("DATABASE_URL is missing");
+}
+
+// Remove sslmode from URL because pg can still verify certificate chain from it
+connectionString = connectionString
+  .replace("?sslmode=require", "")
+  .replace("&sslmode=require", "");
+
+const db = new Pool({
+  connectionString,
   ssl: {
-    rejectUnauthorized: false
-  }
+    rejectUnauthorized: false,
+  },
 });
 
-pool.query(`
+db.query(`
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
@@ -17,11 +28,11 @@ pool.query(`
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )
 `)
-.then(() => {
-  console.log("PostgreSQL users table ready");
-})
-.catch((err) => {
-  console.error("Database setup error:", err);
-});
+  .then(() => {
+    console.log("PostgreSQL users table ready");
+  })
+  .catch((error) => {
+    console.error("Database setup error:", error);
+  });
 
-module.exports = pool;
+module.exports = db;
