@@ -5,7 +5,7 @@ const db = require("../db");
 
 const router = express.Router();
 
-router.post("/create-checkout-session", async (req, res) => {
+router.post("/create-checkout-session", express.json(), async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -16,13 +16,22 @@ router.post("/create-checkout-session", async (req, res) => {
     const token = authHeader.replace("Bearer ", "");
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(decoded.userId);
+    const userResult = await db.query(
+      "SELECT * FROM users WHERE id = $1",
+      [decoded.userId]
+    );
 
-    if (!user) {
+    if (userResult.rows.length === 0) {
       return res.status(401).json({ message: "User not found." });
     }
 
-    let stripeCustomerId = user.stripeCustomerId;
+    const user = userResult.rows[0];
+
+    if (!process.env.STRIPE_PRICE_ID) {
+      return res.status(500).json({ message: "Stripe price ID missing." });
+    }
+
+    let stripeCustomerId = user.stripe_customer_id;
 
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({
@@ -34,9 +43,9 @@ router.post("/create-checkout-session", async (req, res) => {
 
       stripeCustomerId = customer.id;
 
-      db.prepare("UPDATE users SET stripeCustomerId = ? WHERE id = ?").run(
-        stripeCustomerId,
-        user.id
+      await db.query(
+        "UPDATE users SET stripe_customer_id = $1 WHERE id = $2",
+        [stripeCustomerId, user.id]
       );
     }
 
@@ -56,7 +65,8 @@ router.post("/create-checkout-session", async (req, res) => {
       },
       success_url:
         "https://gumtree-backend-9aaz.onrender.com/api/billing/success?session_id={CHECKOUT_SESSION_ID}",
-      cancel_url: "https://gumtree-backend-9aaz.onrender.com/api/billing/cancel",
+      cancel_url:
+        "https://gumtree-backend-9aaz.onrender.com/api/billing/cancel",
     });
 
     res.json({ url: session.url });
@@ -68,15 +78,18 @@ router.post("/create-checkout-session", async (req, res) => {
 
 router.get("/success", async (req, res) => {
   try {
-    const session = await stripe.checkout.sessions.retrieve(req.query.session_id);
+    const session = await stripe.checkout.sessions.retrieve(
+      req.query.session_id
+    );
 
     const userId = session.metadata && session.metadata.userId;
     const customerId = session.customer;
 
     if (userId) {
-      db.prepare(
-        "UPDATE users SET subscriptionActive = 1, stripeCustomerId = ? WHERE id = ?"
-      ).run(customerId, userId);
+      await db.query(
+        "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
+        [customerId, userId]
+      );
     }
 
     res.send("Payment successful. You can close this page and reopen CrossPoster.");
@@ -93,7 +106,7 @@ router.get("/cancel", (req, res) => {
 router.post(
   "/webhook",
   express.raw({ type: "application/json" }),
-  (req, res) => {
+  async (req, res) => {
     const sig = req.headers["stripe-signature"];
 
     let event;
@@ -106,20 +119,20 @@ router.post(
       );
     } catch (error) {
       console.error("Webhook signature failed:", error.message);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      return res.status(400).send("Webhook Error: " + error.message);
     }
 
     try {
       if (event.type === "checkout.session.completed") {
         const session = event.data.object;
-
         const userId = session.metadata && session.metadata.userId;
         const customerId = session.customer;
 
         if (userId) {
-          db.prepare(
-            "UPDATE users SET subscriptionActive = 1, stripeCustomerId = ? WHERE id = ?"
-          ).run(customerId, userId);
+          await db.query(
+            "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
+            [customerId, userId]
+          );
         }
       }
 
@@ -127,18 +140,20 @@ router.post(
         const subscription = event.data.object;
         const customerId = subscription.customer;
 
-        db.prepare(
-          "UPDATE users SET subscriptionActive = 0 WHERE stripeCustomerId = ?"
-        ).run(customerId);
+        await db.query(
+          "UPDATE users SET subscription_active = false WHERE stripe_customer_id = $1",
+          [customerId]
+        );
       }
 
       if (event.type === "invoice.payment_failed") {
         const invoice = event.data.object;
         const customerId = invoice.customer;
 
-        db.prepare(
-          "UPDATE users SET subscriptionActive = 0 WHERE stripeCustomerId = ?"
-        ).run(customerId);
+        await db.query(
+          "UPDATE users SET subscription_active = false WHERE stripe_customer_id = $1",
+          [customerId]
+        );
       }
 
       res.json({ received: true });
