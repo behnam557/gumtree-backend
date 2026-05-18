@@ -1,11 +1,35 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const { Resend } = require("resend");
 const db = require("../db");
 
 const router = express.Router();
-const resend = new Resend(process.env.RESEND_API_KEY);
+
+async function sendEmail({ to, subject, text }) {
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM_EMAIL,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      text,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `Resend API error: ${response.status} ${JSON.stringify(data)}`
+    );
+  }
+
+  return data;
+}
 
 async function sendOwnerPaymentEmail({
   customerEmail,
@@ -19,8 +43,7 @@ async function sendOwnerPaymentEmail({
       ? `£${(amountTotal / 100).toFixed(2)}`
       : `Unknown ${(currency || "").toUpperCase()}`;
 
-  const result = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL,
+  const result = await sendEmail({
     to: process.env.OWNER_NOTIFICATION_EMAIL,
     subject: "New CrossPoster payment received",
     text:
@@ -50,8 +73,7 @@ async function sendCustomerPaymentEmail({
       ? `£${(amountTotal / 100).toFixed(2)}`
       : `Unknown ${(currency || "").toUpperCase()}`;
 
-  const result = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL,
+  const result = await sendEmail({
     to: customerEmail,
     subject: "Your CrossPoster subscription is active",
     text:
@@ -168,11 +190,10 @@ router.get("/test-email", async (req, res) => {
   console.log("Test email route hit");
 
   try {
-    const result = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL,
+    const result = await sendEmail({
       to: process.env.OWNER_NOTIFICATION_EMAIL,
       subject: "CrossPoster owner test email",
-      text: "If you received this, Resend email sending is working.",
+      text: "If you received this, Resend API email sending is working.",
     });
 
     console.log("Owner test email sent:", result);
