@@ -1,9 +1,79 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const nodemailer = require("nodemailer");
 const db = require("../db");
 
 const router = express.Router();
+
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: String(process.env.SMTP_SECURE || "false") === "true",
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+async function sendOwnerPaymentEmail({
+  customerEmail,
+  amountTotal,
+  currency,
+  stripeCustomerId,
+  stripeSessionId,
+}) {
+  const formattedAmount =
+    typeof amountTotal === "number"
+      ? `£${(amountTotal / 100).toFixed(2)}`
+      : `Unknown ${(currency || "").toUpperCase()}`;
+
+  const info = await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: process.env.OWNER_NOTIFICATION_EMAIL,
+    subject: "New CrossPoster payment received",
+    text:
+      "A new payment has been received.\n\n" +
+      "Customer email: " + (customerEmail || "Unknown") + "\n" +
+      "Amount: " + formattedAmount + "\n" +
+      "Currency: " + String(currency || "").toUpperCase() + "\n" +
+      "Stripe customer ID: " + (stripeCustomerId || "Unknown") + "\n" +
+      "Checkout session ID: " + (stripeSessionId || "Unknown"),
+  });
+
+  console.log("Owner payment email sent:", info.messageId);
+}
+
+async function sendCustomerPaymentEmail({
+  customerEmail,
+  amountTotal,
+  currency,
+}) {
+  if (!customerEmail) {
+    console.log("Customer email skipped: no customer email found");
+    return;
+  }
+
+  const formattedAmount =
+    typeof amountTotal === "number"
+      ? `£${(amountTotal / 100).toFixed(2)}`
+      : `Unknown ${(currency || "").toUpperCase()}`;
+
+  const info = await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: customerEmail,
+    subject: "Your CrossPoster subscription is active",
+    text:
+      "Thank you for your payment.\n\n" +
+      "Your CrossPoster subscription is now active.\n\n" +
+      "Amount paid: " + formattedAmount + "\n" +
+      "Currency: " + String(currency || "").toUpperCase() + "\n\n" +
+      "If you need help, please contact: " +
+      (process.env.SUPPORT_EMAIL || "crossposterhelp@gmail.com"),
+  });
+
+  console.log("Customer payment email sent:", info.messageId, "to", customerEmail);
+}
 
 router.post("/create-checkout-session", express.json(), async (req, res) => {
   try {
@@ -100,7 +170,33 @@ router.get("/success", async (req, res) => {
 });
 
 router.get("/cancel", (req, res) => {
-  res.send("Payment cancelled. You can close this page.");
+  res.send("Payment cancelled TEST 999");
+});
+
+router.get("/test-email", async (req, res) => {
+  try {
+    const ownerInfo = await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: process.env.OWNER_NOTIFICATION_EMAIL,
+      subject: "CrossPoster owner test email",
+      text: "If you received this, owner email sending is working.",
+    });
+
+    const customerInfo = await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: process.env.SUPPORT_EMAIL || "crossposterhelp@gmail.com",
+      subject: "CrossPoster customer test email",
+      text: "If you received this, customer email sending is working.",
+    });
+
+    console.log("Owner test email sent:", ownerInfo.messageId);
+    console.log("Customer test email sent:", customerInfo.messageId);
+
+    res.send("Test emails sent.");
+  } catch (error) {
+    console.error("Test email failed:", error);
+    res.status(500).send("Test email failed: " + error.message);
+  }
 });
 
 router.post(
@@ -127,12 +223,40 @@ router.post(
         const session = event.data.object;
         const userId = session.metadata && session.metadata.userId;
         const customerId = session.customer;
+        const customerEmail =
+          (session.customer_details && session.customer_details.email) ||
+          (session.metadata && session.metadata.email) ||
+          "";
+
+        console.log("Webhook checkout.session.completed received for:", customerEmail || "Unknown");
 
         if (userId) {
           await db.query(
             "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
             [customerId, userId]
           );
+        }
+
+        try {
+          await sendOwnerPaymentEmail({
+            customerEmail,
+            amountTotal: session.amount_total,
+            currency: session.currency,
+            stripeCustomerId: customerId,
+            stripeSessionId: session.id,
+          });
+        } catch (emailError) {
+          console.error("Owner email send failed:", emailError);
+        }
+
+        try {
+          await sendCustomerPaymentEmail({
+            customerEmail,
+            amountTotal: session.amount_total,
+            currency: session.currency,
+          });
+        } catch (emailError) {
+          console.error("Customer email send failed:", emailError);
         }
       }
 
