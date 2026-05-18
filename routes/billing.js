@@ -1,24 +1,11 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const db = require("../db");
 
 const router = express.Router();
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: String(process.env.SMTP_SECURE || "false") === "true",
-  family: 4,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    servername: process.env.SMTP_HOST,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function sendOwnerPaymentEmail({
   customerEmail,
@@ -32,8 +19,8 @@ async function sendOwnerPaymentEmail({
       ? `£${(amountTotal / 100).toFixed(2)}`
       : `Unknown ${(currency || "").toUpperCase()}`;
 
-  const info = await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  const result = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL,
     to: process.env.OWNER_NOTIFICATION_EMAIL,
     subject: "New CrossPoster payment received",
     text:
@@ -45,7 +32,7 @@ async function sendOwnerPaymentEmail({
       "Checkout session ID: " + (stripeSessionId || "Unknown"),
   });
 
-  console.log("Owner payment email sent:", info.messageId);
+  console.log("Owner payment email sent:", result);
 }
 
 async function sendCustomerPaymentEmail({
@@ -63,8 +50,8 @@ async function sendCustomerPaymentEmail({
       ? `£${(amountTotal / 100).toFixed(2)}`
       : `Unknown ${(currency || "").toUpperCase()}`;
 
-  const info = await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  const result = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL,
     to: customerEmail,
     subject: "Your CrossPoster subscription is active",
     text:
@@ -76,7 +63,7 @@ async function sendCustomerPaymentEmail({
       (process.env.SUPPORT_EMAIL || "crossposterhelp@gmail.com"),
   });
 
-  console.log("Customer payment email sent:", info.messageId, "to", customerEmail);
+  console.log("Customer payment email sent:", result);
 }
 
 router.post("/create-checkout-session", express.json(), async (req, res) => {
@@ -178,28 +165,21 @@ router.get("/cancel", (req, res) => {
 });
 
 router.get("/test-email", async (req, res) => {
+  console.log("Test email route hit");
+
   try {
-    const ownerInfo = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    const result = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL,
       to: process.env.OWNER_NOTIFICATION_EMAIL,
       subject: "CrossPoster owner test email",
-      text: "If you received this, owner email sending is working.",
+      text: "If you received this, Resend email sending is working.",
     });
 
-    const customerInfo = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: process.env.SUPPORT_EMAIL || "crossposterhelp@gmail.com",
-      subject: "CrossPoster customer test email",
-      text: "If you received this, customer email sending is working.",
-    });
-
-    console.log("Owner test email sent:", ownerInfo.messageId);
-    console.log("Customer test email sent:", customerInfo.messageId);
-
-    res.send("Test emails sent.");
+    console.log("Owner test email sent:", result);
+    return res.send("Test email sent.");
   } catch (error) {
     console.error("Test email failed:", error);
-    res.status(500).send("Test email failed: " + error.message);
+    return res.status(500).send("Test email failed: " + error.message);
   }
 });
 
