@@ -183,25 +183,7 @@ router.get("/success", async (req, res) => {
 });
 
 router.get("/cancel", (req, res) => {
-  res.send("Payment cancelled TEST 999");
-});
-
-router.get("/test-email", async (req, res) => {
-  console.log("Test email route hit");
-
-  try {
-    const result = await sendEmail({
-      to: process.env.OWNER_NOTIFICATION_EMAIL,
-      subject: "CrossPoster owner test email",
-      text: "If you received this, Resend API email sending is working.",
-    });
-
-    console.log("Owner test email sent:", result);
-    return res.send("Test email sent.");
-  } catch (error) {
-    console.error("Test email failed:", error);
-    return res.status(500).send("Test email failed: " + error.message);
-  }
+  res.send("Payment cancelled. You can close this page.");
 });
 
 router.post(
@@ -233,7 +215,10 @@ router.post(
           (session.metadata && session.metadata.email) ||
           "";
 
-        console.log("Webhook checkout.session.completed received for:", customerEmail || "Unknown");
+        console.log(
+          "Webhook checkout.session.completed received for:",
+          customerEmail || "Unknown"
+        );
 
         if (userId) {
           await db.query(
