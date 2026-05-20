@@ -25,6 +25,7 @@ db.query(`
     password TEXT NOT NULL,
     stripe_customer_id TEXT,
     subscription_active BOOLEAN DEFAULT false,
+    access_expires_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )
 `)
@@ -33,6 +34,17 @@ db.query(`
   })
   .catch((error) => {
     console.error("Database setup error:", error);
+  });
+
+db.query(`
+  ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMP
+`)
+  .then(() => {
+    console.log("PostgreSQL access_expires_at column ready");
+  })
+  .catch((error) => {
+    console.error("Database alter error:", error);
   });
 
 module.exports = db;
