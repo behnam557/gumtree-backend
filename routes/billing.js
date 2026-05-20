@@ -169,11 +169,15 @@ router.get("/success", async (req, res) => {
     const customerId = session.customer;
 
     if (userId) {
-      await db.query(
-        "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
-        [customerId, userId]
-      );
-    }
+  await db.query(
+    `UPDATE users
+     SET subscription_active = true,
+         stripe_customer_id = $1,
+         access_expires_at = NOW() + INTERVAL '30 days'
+     WHERE id = $2`,
+    [customerId, userId]
+  );
+}
 
     res.send("Payment successful. You can close this page and reopen CrossPoster.");
   } catch (error) {
@@ -221,11 +225,15 @@ router.post(
         );
 
         if (userId) {
-          await db.query(
-            "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
-            [customerId, userId]
-          );
-        }
+  await db.query(
+    `UPDATE users
+     SET subscription_active = true,
+         stripe_customer_id = $1,
+         access_expires_at = NOW() + INTERVAL '30 days'
+     WHERE id = $2`,
+    [customerId, userId]
+  );
+}
 
         try {
           await sendOwnerPaymentEmail({
