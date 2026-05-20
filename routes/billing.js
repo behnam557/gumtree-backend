@@ -133,7 +133,7 @@ router.post("/create-checkout-session", express.json(), async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+      mode: "payment",
       customer: stripeCustomerId,
       line_items: [
         {
