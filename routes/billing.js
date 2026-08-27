@@ -133,7 +133,7 @@ router.post("/create-checkout-session", express.json(), async (req, res) => {
     }
 
     const session = await stripe.checkout.sessions.create({
-      mode: "payment",
+      mode: "subscription",
       customer: stripeCustomerId,
       line_items: [
         {
@@ -169,15 +169,11 @@ router.get("/success", async (req, res) => {
     const customerId = session.customer;
 
     if (userId) {
-  await db.query(
-    `UPDATE users
-     SET subscription_active = true,
-         stripe_customer_id = $1,
-         access_expires_at = NOW() + INTERVAL '30 days'
-     WHERE id = $2`,
-    [customerId, userId]
-  );
-}
+      await db.query(
+        "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
+        [customerId, userId]
+      );
+    }
 
     res.send("Payment successful. You can close this page and reopen CrossPoster.");
   } catch (error) {
@@ -225,15 +221,11 @@ router.post(
         );
 
         if (userId) {
-  await db.query(
-    `UPDATE users
-     SET subscription_active = true,
-         stripe_customer_id = $1,
-         access_expires_at = NOW() + INTERVAL '30 days'
-     WHERE id = $2`,
-    [customerId, userId]
-  );
-}
+          await db.query(
+            "UPDATE users SET subscription_active = true, stripe_customer_id = $1 WHERE id = $2",
+            [customerId, userId]
+          );
+        }
 
         try {
           await sendOwnerPaymentEmail({
@@ -263,7 +255,10 @@ router.post(
         const customerId = subscription.customer;
 
         await db.query(
-          "UPDATE users SET subscription_active = false WHERE stripe_customer_id = $1",
+          `UPDATE users
+           SET subscription_active = false
+           WHERE stripe_customer_id = $1
+             AND (access_expires_at IS NULL OR access_expires_at <= NOW())`,
           [customerId]
         );
       }
@@ -273,7 +268,10 @@ router.post(
         const customerId = invoice.customer;
 
         await db.query(
-          "UPDATE users SET subscription_active = false WHERE stripe_customer_id = $1",
+          `UPDATE users
+           SET subscription_active = false
+           WHERE stripe_customer_id = $1
+             AND (access_expires_at IS NULL OR access_expires_at <= NOW())`,
           [customerId]
         );
       }
