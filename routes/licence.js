@@ -5,52 +5,73 @@ const db = require("../db");
 const router = express.Router();
 
 router.get("/check", async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
+  const authHeader = req.headers.authorization;
 
-    if (!authHeader) {
-      return res.status(401).json({ active: false });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      message: "Login required."
+    });
+  }
+
+  const token = authHeader.slice(7).trim();
+
+  let decoded;
+
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (error) {
+    console.error("Licence token error:", error.name, error.message);
+
+    if (
+      error.name === "TokenExpiredError" ||
+      error.name === "JsonWebTokenError" ||
+      error.name === "NotBeforeError"
+    ) {
+      return res.status(401).json({
+        message: "Login expired."
+      });
     }
 
-    const token = authHeader.replace("Bearer ", "");
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    return res.status(500).json({
+      message: "Could not verify login."
+    });
+  }
 
+  try {
     const result = await db.query(
-      "SELECT id, email, subscription_active, access_expires_at FROM users WHERE id = $1",
+      "SELECT * FROM users WHERE id = $1",
       [decoded.userId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ active: false });
+      return res.status(401).json({
+        message: "User not found."
+      });
     }
 
     const user = result.rows[0];
 
-    const now = new Date();
-    const expiresAt = user.access_expires_at
-      ? new Date(user.access_expires_at)
-      : null;
+    const manualAccessActive =
+      !!user.access_expires_at &&
+      new Date(user.access_expires_at).getTime() > Date.now();
 
     const active =
-      user.subscription_active === true &&
-      expiresAt &&
-      expiresAt > now;
+      user.subscription_active === true ||
+      manualAccessActive;
 
-    if (user.subscription_active === true && (!expiresAt || expiresAt <= now)) {
-      await db.query(
-        "UPDATE users SET subscription_active = false WHERE id = $1",
-        [user.id]
-      );
-    }
-
-    res.json({
-      active: active,
+    return res.json({
+      active,
       email: user.email,
-      accessExpiresAt: expiresAt ? expiresAt.toISOString() : null,
+      access_expires_at: user.access_expires_at || null
     });
   } catch (error) {
-    console.error("Licence check error:", error);
-    res.status(401).json({ active: false });
+    console.error("Licence database error:", error);
+
+    // Database/Supabase/Render failure is not an authentication failure.
+    // 503 tells the extension to keep the last verified licence state.
+    return res.status(503).json({
+      message: "Licence service temporarily unavailable."
+    });
   }
 });
 
